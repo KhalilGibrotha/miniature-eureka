@@ -1,0 +1,250 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Linting
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10"]
+    outputs:
+      lint-status: ${{ steps.linter.outcome }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Detect changed files
+        id: changed-files
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            python:
+              - "**/*.py"
+            yaml:
+              - "**/*.yml"
+              - "**/*.yaml"
+            ansible:
+              - "roles/**"
+              - "playbooks/**"
+              - "**/molecule/**"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+
+      - name: Install linting tools
+        run: |
+          pip install flake8 black yamllint ansible-lint
+
+      - name: Super-Linter
+        id: linter
+        uses: github/super-linter@v5
+        env:
+          VALIDATE_PYTHON: true
+          VALIDATE_YAML: true
+          VALIDATE_ANSIBLE: false
+          DEFAULT_BRANCH: main
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Black formatting check
+        run: black --check .
+        if: steps.changed-files.outputs.python == 'true'
+
+      - name: flake8 lint
+        run: flake8 .
+        if: steps.changed-files.outputs.python == 'true'
+
+      - name: yamllint
+        run: yamllint .
+        if: steps.changed-files.outputs.yaml == 'true'
+
+      - name: ansible-lint
+        run: ansible-lint -v --force-color
+        if: steps.changed-files.outputs.ansible == 'true'
+
+      - name: Linting summary
+        run: echo "Linting completed."
+
+  security:
+    name: Security Scans
+    runs-on: ubuntu-latest
+    needs: lint
+    outputs:
+      security-status: ${{ steps.bandit.outcome }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Detect changed files
+        id: changed-files
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            python:
+              - "**/*.py"
+            yaml:
+              - "**/*.yml"
+              - "**/*.yaml"
+            ansible:
+              - "roles/**"
+              - "playbooks/**"
+              - "**/molecule/**"
+
+      - name: Set up Python 3.x
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install security tools
+        run: |
+          pip install bandit ansible-review
+      - name: Run bandit
+        id: bandit
+        run: bandit -r .
+        if: steps.changed-files.outputs.python == "true"
+
+      - name: Trivy filesystem scan
+        uses: aquasec/trivy-action@master
+        with:
+          scan-type: fs
+          severity: CRITICAL,HIGH
+        env:
+          TRIVY_SEVERITY: CRITICAL,HIGH
+
+      - name: gitleaks scan
+        uses: Zricethezav/gitleaks-action@v8
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ansible-review
+        run: ansible-review
+        if: steps.changed-files.outputs.ansible == 'true'
+
+  ansible-tests:
+    name: Ansible Checks
+    runs-on: ubuntu-latest
+    needs: security
+    outputs:
+      ansible-status: ${{ steps.syntax.outcome }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Detect changed files
+        id: changed-files
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            python:
+              - "**/*.py"
+            yaml:
+              - "**/*.yml"
+              - "**/*.yaml"
+            ansible:
+              - "roles/**"
+              - "playbooks/**"
+              - "**/molecule/**"
+      - name: Set up Python 3.x
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+
+
+      - name: Install ansible and molecule
+        run: |
+          pip install ansible molecule ansible-lint
+
+      - name: Cache Galaxy collections
+        uses: actions/cache@v3
+        with:
+          path: ~/.ansible
+          key: ${{ runner.os }}-ansible-${{ hashFiles('collections/requirements.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-ansible-
+
+      - name: Syntax check playbooks
+        id: syntax
+        run: |
+          for playbook in $(find . -name "*.yml" -o -name "*.yaml"); do
+            ansible-playbook --syntax-check $playbook
+          done
+        if: steps.changed-files.outputs.ansible == "true"
+
+      - name: Molecule tests
+        run: |
+          for dir in $(find roles -name molecule -type d); do
+            cd $(dirname $dir)
+            molecule test
+            cd -
+          done
+        if: hashFiles('roles/**/molecule/*') != ''
+
+  docs:
+    name: Documentation Checks
+    runs-on: ubuntu-latest
+    needs: ansible-tests
+    outputs:
+      docs-status: ${{ steps.markdown.outcome }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+        - name: Detect changed files
+          id: changed-files
+          uses: dorny/paths-filter@v2
+          with:
+            filters: |
+              docs:
+                - "**/*.md"
+
+      - name: Check README and docs folder
+        run: |
+          test -f README.md
+          test -d docs
+
+      - name: Markdown lint
+        id: markdown
+        if: steps.changed-files.outputs.docs == "true"
+        run: |
+          npm install -g markdownlint-cli
+          markdownlint **/*.md
+
