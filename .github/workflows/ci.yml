@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Code linting and formatting
   lint:
     name: Linting
     runs-on: ubuntu-latest
@@ -16,6 +17,7 @@ jobs:
     outputs:
       lint-status: ${{ steps.linter.outcome }}
     steps:
+      # Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
@@ -82,6 +84,7 @@ jobs:
       - name: Linting summary
         run: echo "Linting completed."
 
+  # Security scanning
   security:
     name: Security Scans
     runs-on: ubuntu-latest
@@ -90,6 +93,7 @@ jobs:
       security-status: ${{ steps.bandit.outcome }}
 
     steps:
+      # Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
@@ -148,6 +152,7 @@ jobs:
         run: ansible-review
         if: steps.changed-files.outputs.ansible == 'true'
 
+  # Ansible syntax and molecule tests
   ansible-tests:
     name: Ansible Checks
     runs-on: ubuntu-latest
@@ -155,6 +160,7 @@ jobs:
     outputs:
       ansible-status: ${{ steps.syntax.outcome }}
     steps:
+      # Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
@@ -218,6 +224,7 @@ jobs:
           done
         if: hashFiles('roles/**/molecule/*') != ''
 
+  # Documentation validation
   docs:
     name: Documentation Checks
     runs-on: ubuntu-latest
@@ -225,25 +232,34 @@ jobs:
     outputs:
       docs-status: ${{ steps.markdown.outcome }}
     steps:
+      # Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
 
-        - name: Detect changed files
-          id: changed-files
-          uses: dorny/paths-filter@v2
-          with:
-            filters: |
-              docs:
-                - "**/*.md"
+      # Detect documentation related changes
+      - name: Detect changed files
+        id: changed-files
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            docs:
+              - "**/*.md"
+            agents:
+              - "AGENTS.md"
 
+      # Ensure documentation skeleton exists
       - name: Check README and docs folder
         run: |
           test -f README.md
           test -d docs
+          test -f AGENTS.md
 
+      # Run markdown lint only when docs change
       - name: Markdown lint
         id: markdown
-        if: steps.changed-files.outputs.docs == "true"
+        if: |
+          steps.changed-files.outputs.docs == 'true' ||
+          steps.changed-files.outputs.agents == 'true'
         run: |
           npm install -g markdownlint-cli
           markdownlint **/*.md

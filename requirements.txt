@@ -1,0 +1,9 @@
+ansible
+molecule
+flake8
+black
+yamllint
+ansible-lint
+bandit
+ansible-review
+
