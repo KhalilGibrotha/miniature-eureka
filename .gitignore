@@ -1,0 +1,14 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Ansible/Molecule artifacts
+.molecule/
+roles/*/molecule/*/logs/
+
+# Editors
+*.swp
+*~
+.DS_Store
+
